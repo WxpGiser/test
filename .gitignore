@@ -9,3 +9,8 @@ Build/
 Plugins/*/Binaries/
 Plugins/*/Intermediate
 Binaries/
+
+# 生成文件 / 运行时缓存
+cesium-request-cache.sqlite
+*.sqlite
+*.sqlite-journal

@@ -1,0 +1,23 @@
+# 默认按文本处理并按需归一化换行
+* text=auto
+
+# Unreal Engine 二进制资源（不做文本 diff / 合并）
+*.uasset binary
+*.umap binary
+*.ubulk binary
+*.uexp binary
+*.upk binary
+*.udk binary
+*.pdb binary
+*.dll binary
+*.exe binary
+*.lib binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.tga binary
+*.bmp binary
+*.wav binary
+*.fbx binary
+*.zip binary
+*.sqlite binary
