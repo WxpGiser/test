@@ -1,0 +1,99 @@
+#pragma once
+
+#include <Cesium3DTilesSelection/Library.h>
+#include <Cesium3DTilesSelection/Tile.h>
+
+#include <cstdint>
+#include <unordered_set>
+#include <vector>
+
+namespace Cesium3DTilesSelection {
+
+/**
+ * @brief Reports the results of @ref Tileset::updateViewGroup.
+ *
+ * Users of a @ref Tileset will call @ref Tileset::updateViewGroup and
+ * receive this structure so that they can update the state of their rendering
+ * system accordingly. The tileset will internally keep track the state of the
+ * tiles throughout the selection process, and use this structure to provide
+ * information about the state changes of tiles to clients.
+ */
+class CESIUM3DTILESSELECTION_API ViewUpdateResult final {
+public:
+  /**
+   * @brief The tiles that were selected by the tileset traversal this frame.
+   * These tiles should be rendered by the client.
+   *
+   * Tiles in this list may be fading in if \ref
+   * TilesetOptions::enableLodTransitionPeriod is true.
+   */
+  std::vector<Tile::ConstPointer> tilesToRenderThisFrame;
+
+  /**
+   * @brief The computed screen space error of the tiles selected by the
+   * tileset traversal this frame. The values correspond to the tiles linked in
+   * \ref tilesToRenderThisFrame, and may be used by the client to influence
+   * rendering behavior.
+   */
+  std::vector<double> tileScreenSpaceErrorThisFrame;
+
+  /**
+   * @brief Tiles on this list are no longer selected for rendering.
+   *
+   * If \ref TilesetOptions::enableLodTransitionPeriod is true they may be
+   * fading out. If a tile's \ref
+   * TileRenderContent::getLodTransitionFadePercentage is 0 or LOD transitions
+   * are disabled, the tile should be hidden right away.
+   */
+  std::unordered_set<Tile::ConstPointer> tilesFadingOut;
+
+  /**
+   * @brief The number of tiles in the worker thread load queue.
+   */
+  int32_t workerThreadTileLoadQueueLength = 0;
+
+  /**
+   * @brief The number of tiles in the main thread load queue.
+   */
+  int32_t mainThreadTileLoadQueueLength = 0;
+
+  /**
+   * @brief The number of tiles visited during tileset traversal this frame.
+   */
+  uint32_t tilesVisited = 0;
+  /**
+   * @brief The number of culled tiles visited during tileset traversal this
+   * frame.
+   */
+  uint32_t culledTilesVisited = 0;
+  /**
+   * @brief The number of tiles that were skipped because they were culled
+   * during tileset traversal this frame.
+   */
+  uint32_t tilesCulled = 0;
+  /**
+   * @brief The number of tiles occluded this frame.
+   */
+  uint32_t tilesOccluded = 0;
+  /**
+   * @brief The number of tiles still waiting to obtain a \ref
+   * TileOcclusionState this frame.
+   */
+  uint32_t tilesWaitingForOcclusionResults = 0;
+  /**
+   * @brief The number of tiles kicked from the render list this frame.
+   */
+  uint32_t tilesKicked = 0;
+  /**
+   * @brief The maximum depth of the tile tree visited this frame.
+   */
+  uint32_t maxDepthVisited = 0;
+
+  /**
+   * @brief The frame number. This is incremented every time \ref
+   * Tileset::updateViewGroup is called.
+   */
+  int32_t frameNumber = 0;
+};
+
+} // namespace Cesium3DTilesSelection

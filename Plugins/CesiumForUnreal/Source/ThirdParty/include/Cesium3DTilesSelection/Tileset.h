@@ -1,0 +1,522 @@
+#pragma once
+
+#include <Cesium3DTilesSelection/Library.h>
+#include <Cesium3DTilesSelection/LoadedTileEnumerator.h>
+#include <Cesium3DTilesSelection/RasterOverlayCollection.h>
+#include <Cesium3DTilesSelection/SampleHeightResult.h>
+#include <Cesium3DTilesSelection/Tile.h>
+#include <Cesium3DTilesSelection/TilesetContentLoader.h>
+#include <Cesium3DTilesSelection/TilesetContentLoaderFactory.h>
+#include <Cesium3DTilesSelection/TilesetExternals.h>
+#include <Cesium3DTilesSelection/TilesetLoadFailureDetails.h>
+#include <Cesium3DTilesSelection/TilesetOptions.h>
+#include <Cesium3DTilesSelection/TilesetSelection.h>
+#include <Cesium3DTilesSelection/TilesetViewGroup.h>
+#include <Cesium3DTilesSelection/ViewState.h>
+#include <Cesium3DTilesSelection/ViewUpdateResult.h>
+#include <CesiumAsync/AsyncSystem.h>
+#include <CesiumUtility/IntrusivePointer.h>
+
+#include <rapidjson/fwd.h>
+
+#include <list>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace Cesium3DTilesSelection {
+
+class TilesetContentManager;
+class TilesetMetadata;
+class TilesetHeightQuery;
+struct TilesetHeightRequest;
+class TilesetSharedAssetSystem;
+class TilesetViewGroup;
+class TilesetFrameState;
+
+/**
+ * @brief A <a
+ * href="https://github.com/CesiumGS/3d-tiles/tree/master/specification">3D
+ * Tiles tileset</a>, used for streaming massive heterogeneous 3D geospatial
+ * datasets.
+ */
+class CESIUM3DTILESSELECTION_API Tileset final {
+public:
+  /**
+   * @brief Constructs a new instance with a given custom tileset loader.
+   * @param externals The external interfaces to use.
+   * @param pCustomLoader The custom loader used to load the tileset and tile
+   * content.
+   * @param pRootTile The root tile that is associated with the custom loader
+   * @param options Additional options for the tileset.
+   */
+  Tileset(
+      const TilesetExternals& externals,
+      std::unique_ptr<TilesetContentLoader>&& pCustomLoader,
+      std::unique_ptr<Tile>&& pRootTile,
+      const TilesetOptions& options = TilesetOptions());
+
+  /**
+   * @brief Constructs a new instance with a given `tileset.json` URL.
+   * @param externals The external interfaces to use.
+   * @param url The URL of the `tileset.json`.
+   * @param options Additional options for the tileset.
+   */
+  Tileset(
+      const TilesetExternals& externals,
+      const std::string& url,
+      const TilesetOptions& options = TilesetOptions());
+
+  /**
+   * @brief Constructs a new instance with the given asset ID on <a
+   * href="https://cesium.com/ion/">Cesium ion</a>.
+   * @param externals The external interfaces to use.
+   * @param ionAssetID The ID of the Cesium ion asset to use.
+   * @param ionAccessToken The Cesium ion access token authorizing access to the
+   * asset.
+   * @param options Additional options for the tileset.
+   * @param ionAssetEndpointUrl The URL of the ion asset endpoint. Defaults
+   * to Cesium ion but a custom endpoint can be specified.
+   */
+  Tileset(
+      const TilesetExternals& externals,
+      int64_t ionAssetID,
+      const std::string& ionAccessToken,
+      const TilesetOptions& options = TilesetOptions(),
+      const std::string& ionAssetEndpointUrl = "https://api.cesium.com/");
+
+  /**
+   * @brief Constructs a new instance with the given @ref
+   * TilesetContentLoaderFactory.
+   *
+   * @param externals The external interfaces to use.
+   * @param loaderFactory The factory to use to create the @ref
+   * TilesetContentLoader.
+   * @param options Additional options for the tileset.
+   */
+  Tileset(
+      const TilesetExternals& externals,
+      TilesetContentLoaderFactory&& loaderFactory,
+      const TilesetOptions& options = TilesetOptions());
+
+  /**
+   * @brief Destroys this tileset.
+   *
+   * Destroying the tileset will immediately (before the destructor returns)
+   * unload as much tile content as possible. However, tiles that are currently
+   * in the process of being loaded cannot be unloaded immediately. These tiles
+   * will be unloaded asynchronously some time after this destructor returns. To
+   * be notified of completion of the async portion of the tileset destruction,
+   * subscribe to @ref getAsyncDestructionCompleteEvent.
+   */
+  ~Tileset() noexcept;
+
+  /**
+   * @brief A future that resolves when this Tileset has been destroyed (i.e.
+   * its destructor has been called) and all async operations that it was
+   * executing have completed.
+   */
+  CesiumAsync::SharedFuture<void>& getAsyncDestructionCompleteEvent();
+
+  /**
+   * @brief A future that resolves when the details of the root tile of this
+   * tileset are available. The root tile may still be nullptr if the tileset
+   * failed to load (e.g., from an invalid URL).
+   *
+   * Moreover, the root tile's content (e.g., 3D model) will not necessarily
+   * have been loaded yet when this future resolves.
+   */
+  CesiumAsync::SharedFuture<void>& getRootTileAvailableEvent();
+
+  /**
+   * @brief Gets the @ref CesiumUtility::Credit created from
+   * @ref TilesetOptions::credit, if any.
+   */
+  std::optional<CesiumUtility::Credit> getUserCredit() const noexcept;
+
+  /**
+   * @brief Get tileset credits.
+   */
+  const std::vector<CesiumUtility::Credit>& getTilesetCredits() const noexcept;
+
+  /**
+   * @brief Sets whether or not the tileset's credits should be shown on screen.
+   * @param showCreditsOnScreen Whether the credits should be shown on screen.
+   */
+  void setShowCreditsOnScreen(bool showCreditsOnScreen) noexcept;
+
+  /**
+   * @brief Gets the @ref CesiumUtility::CreditSource that identifies this
+   * tileset's credits with the @ref CesiumUtility::CreditSystem.
+   */
+  const CesiumUtility::CreditSource& getCreditSource() const noexcept;
+
+  /**
+   * @brief Gets the @ref TilesetExternals that summarize the external
+   * interfaces used by this tileset.
+   */
+  TilesetExternals& getExternals() noexcept { return this->_externals; }
+
+  /**
+   * @brief Gets the @ref TilesetExternals that summarize the external
+   * interfaces used by this tileset.
+   */
+  const TilesetExternals& getExternals() const noexcept {
+    return this->_externals;
+  }
+
+  /**
+   * @brief Returns the @ref CesiumAsync::AsyncSystem that is used for
+   * dispatching asynchronous tasks.
+   */
+  CesiumAsync::AsyncSystem& getAsyncSystem() noexcept {
+    return this->_asyncSystem;
+  }
+
+  /** @copydoc Tileset::getAsyncSystem() */
+  const CesiumAsync::AsyncSystem& getAsyncSystem() const noexcept {
+    return this->_asyncSystem;
+  }
+
+  /** @copydoc Tileset::getOptions() */
+  const TilesetOptions& getOptions() const noexcept { return this->_options; }
+
+  /**
+   * @brief Gets the @ref TilesetOptions of this tileset.
+   */
+  TilesetOptions& getOptions() noexcept { return this->_options; }
+
+  /**
+   * @brief Gets the @ref CesiumGeospatial::Ellipsoid used by this tileset.
+   */
+  const CesiumGeospatial::Ellipsoid& getEllipsoid() const {
+    return this->_options.ellipsoid;
+  }
+
+  /** @copydoc Tileset::getEllipsoid */
+  CesiumGeospatial::Ellipsoid& getEllipsoid() noexcept {
+    return this->_options.ellipsoid;
+  }
+
+  /**
+   * @brief Gets the root tile of this tileset.
+   *
+   * This may be `nullptr` if there is currently no root tile.
+   */
+  const Tile* getRootTile() const noexcept;
+
+  /**
+   * @brief Gets the root tile of this tileset.
+   *
+   * This may be `nullptr` if there is currently no root tile.
+   */
+  Tile* getRootTile() noexcept;
+
+  /**
+   * @brief Returns the @ref RasterOverlayCollection of this tileset.
+   */
+  RasterOverlayCollection& getOverlays() noexcept;
+
+  /** @copydoc Tileset::getOverlays() */
+  const RasterOverlayCollection& getOverlays() const noexcept;
+
+  /**
+   * @brief Returns the @ref TilesetSharedAssetSystem of this tileset.
+   */
+  TilesetSharedAssetSystem& getSharedAssetSystem() noexcept;
+
+  /** @copydoc Tileset::getSharedAssetSystem() */
+  const TilesetSharedAssetSystem& getSharedAssetSystem() const noexcept;
+
+  /**
+   * @brief Updates this view but waits for all tiles that meet sse to finish
+   * loading and ready to be rendered before returning the function. This method
+   * is significantly slower than @ref Tileset::updateView and should only be
+   * used for capturing movie or non-realtime situation.
+   * @param frustums The @ref ViewState's that the view should be updated for
+   * @returns The set of tiles to render in the updated view. This value is only
+   * valid until the next call to `updateView` or until the tileset is
+   * destroyed, whichever comes first.
+   */
+  [[deprecated("Instead of `tileset.updateViewOffline(...)`, call "
+               "`tileset.updateViewGroupOffline(tileset.getDefaultViewGroup(), "
+               "...)`.")]] const ViewUpdateResult&
+  updateViewOffline(const std::vector<ViewState>& frustums);
+
+  /**
+   * @brief Updates this view, returning the set of tiles to render in this
+   * view.
+   *
+   * Calling this method is equivalent to calling @ref updateViewGroup with
+   * the default view group (@ref getDefaultViewGroup) and then calling
+   * @ref loadTiles.
+   *
+   * @param frustums The @ref ViewState's that the view should be updated for
+   * @param deltaTime The amount of time that has passed since the last call to
+   * updateView, in seconds.
+   * @returns The set of tiles to render in the updated view. This value is only
+   * valid until the next call to `updateView` or until the tileset is
+   * destroyed, whichever comes first.
+   */
+  [[deprecated("Instead of `tileset.updateView(...)`, call "
+               "`tileset.updateViewGroup(tileset.getDefaultViewGroup(), ...)` "
+               "followed by `tileset.loadTiles()`.")]] const ViewUpdateResult&
+  updateView(const std::vector<ViewState>& frustums, float deltaTime = 0.0f);
+
+  /**
+   * @brief Gets the total number of tiles that are currently loaded.
+   */
+  int32_t getNumberOfTilesLoaded() const;
+
+  /**
+   * @brief Gets the percentage of tiles that had been loaded for the default
+   * view group as of the last time it was updated.
+   *
+   * To get the load progress of a view group other than the default, call
+   * @ref TilesetViewGroup::getPreviousLoadProgressPercentage.
+   */
+  float computeLoadProgress() noexcept;
+
+  /**
+   * @brief Gets an object that can be used to enumerate the loaded tiles of
+   * this tileset.
+   *
+   * Before the root tile is available, this method will return an enumerator
+   * that is empty, and that instance will remain empty even after the root tile
+   * is available.
+
+   * Once the root tile is available (see @ref getRootTile and
+   * @ref getRootTileAvailableEvent), the returned instance will remain
+   * valid until the tileset is destroyed.
+   *
+   * While the returned enumerator itself will remain valid as long as the
+   * `Tileset` does, a given iteration may be invalidated by any operation that
+   * modifies the @ref Tile hierarchy.
+   */
+  LoadedConstTileEnumerator loadedTiles() const;
+
+  /**
+   * @brief Invokes a function for each tile that is currently loaded.
+   *
+   * @param callback The function to invoke.
+   */
+  void forEachLoadedTile(
+      const std::function<void(const Tile& tile)>& callback) const;
+
+  /**
+   * @brief Gets the total number of bytes of tile and raster overlay data that
+   * are currently loaded.
+   */
+  int64_t getTotalDataBytes() const noexcept;
+
+  /**
+   * @brief Gets the @ref TilesetMetadata associated with the main or
+   * external tileset.json that contains a given tile. If the metadata is not
+   * yet loaded, this method returns nullptr.
+   *
+   * If this tileset's root tile is not yet available, this method returns
+   * nullptr.
+   *
+   * If the tileset has a @ref TilesetMetadata::schemaUri, it will not
+   * necessarily have been loaded yet.
+   *
+   * If the provided tile is not the root tile of a tileset.json, this method
+   * walks up the @ref Tile::getParent chain until it finds the closest
+   * root and then returns the metadata associated with the corresponding
+   * tileset.json.
+   *
+   * Consider calling @ref loadMetadata instead, which will return a future
+   * that only resolves after the root tile is loaded and the `schemaUri`, if
+   * any, has been resolved.
+   *
+   * @param pTile The tile. If this parameter is nullptr, the metadata for the
+   * main tileset.json is returned.
+   * @return The found metadata, or nullptr if the root tile is not yet loaded.
+   */
+  const TilesetMetadata* getMetadata(const Tile* pTile = nullptr) const;
+
+  /**
+   * @brief Asynchronously loads the metadata associated with the main
+   * tileset.json.
+   *
+   * Before the returned future resolves, the root tile of this tileset will be
+   * loaded and the @ref TilesetMetadata::schemaUri will be loaded if one
+   * has been specified.
+   *
+   * If the tileset or `schemaUri` fail to load, the returned future will
+   * reject.
+   *
+   * @return A shared future that resolves to the loaded metadata. Once this
+   * future resolves, @ref getMetadata can be used to synchronously obtain
+   * the same metadata instance.
+   */
+  CesiumAsync::Future<const TilesetMetadata*> loadMetadata();
+
+  /**
+   * @brief Initiates an asynchronous query for the height of this tileset at a
+   * list of cartographic positions (longitude and latitude). The most detailed
+   * available tiles are used to determine each height.
+   *
+   * The height of the input positions is ignored. The output height is
+   * expressed in meters above the ellipsoid (usually WGS84), which should not
+   * be confused with a height above mean sea level.
+   *
+   * Note that @ref Tileset::updateView must be called periodically, or else
+   * the returned `Future` will never resolve. If you are not using this tileset
+   * for visualization, you can call `updateView` with an empty list of
+   * frustums.
+   *
+   * @param positions The positions for which to sample heights.
+   * @return A future that asynchronously resolves to the result of the height
+   * query.
+   */
+  CesiumAsync::Future<SampleHeightResult> sampleHeightMostDetailed(
+      const std::vector<CesiumGeospatial::Cartographic>& positions);
+
+  /**
+   * @brief Gets the default view group that is used when calling
+   * @ref updateView.
+   *
+   * @return The view group.
+   */
+  TilesetViewGroup& getDefaultViewGroup();
+
+  /** @copydoc getDefaultViewGroup */
+  const TilesetViewGroup& getDefaultViewGroup() const;
+
+  /**
+   * @brief Updates a view group, returning the set of tiles to render in this
+   * view.
+   *
+   * This method should typically be called once per "render frame", but it may
+   * be called at different rates for different view groups.
+   *
+   * Users must also periodically call @ref loadTiles, which will start or
+   * continue the asynchronous process of loading tiles that are needed across
+   * all view groups.
+   *
+   * @param viewGroup The view group to update. The first time `updateViewGroup`
+   * is called, simply create a new `TilesetViewGroup` to pass as this
+   * parameter. For successive calls to `updateViewGroup`, pass this same
+   * instance.
+   * @param frustums The @ref ViewState instances that are observing the
+   * tileset in this view group.
+   * @param deltaTime The amount of time that has passed since the last call to
+   * updateView, in seconds.
+   * @returns The set of tiles to render in the updated view. This value is only
+   * valid until the next call to `updateViewGroup` or until the view group is
+   * destroyed, whichever comes first.
+   */
+  const ViewUpdateResult& updateViewGroup(
+      TilesetViewGroup& viewGroup,
+      const std::vector<ViewState>& frustums,
+      float deltaTime = 0.0f);
+
+  /**
+   * @brief Updates a view group, returning the set of tiles to render in this
+   * view. Unlike @ref updateViewGroup, this method blocks the calling thread
+   * until all tiles suitable for the views have been loaded.
+   *
+   * This method is significantly slower than @ref updateViewGroup and
+   * should only be used for capturing a movie or for other non-realtime
+   * situations.
+   *
+   * @param viewGroup The view group to update. The first time `updateViewGroup`
+   * is called, simply create a new `TilesetViewGroup` to pass as this
+   * parameter. For successive calls to `updateViewGroup`, pass this same
+   * instance.
+   * @param frustums The @ref ViewState instances that are observing the
+   * tileset in this view group.
+   * @returns The set of tiles to render in the updated view. This value is only
+   * valid until the next call to `updateViewGroup` or until the view group is
+   * destroyed, whichever comes first.
+   */
+  const ViewUpdateResult& updateViewGroupOffline(
+      TilesetViewGroup& viewGroup,
+      const std::vector<ViewState>& frustums);
+
+  /**
+   * @brief Loads the tiles that are currently deemed the most important,
+   * across all height queries and @ref TilesetViewGroup instances.
+   *
+   * In order to minimize tile load latency, this method should be called
+   * frequently, such as once per render frame. It will return quickly when
+   * there is no work to do.
+   */
+  void loadTiles();
+
+  /**
+   * @brief Updates the content of the given tile based on its current state.
+   *
+   * This may involve steps such as updating tile properties based on content,
+   * creating tile children, handling tile unloading, and more.
+   *
+   * @note This is automatically called as part of the normal tile selection
+   * process, such as when using \ref updateViewGroup or \ref
+   * updateViewGroupOffline. This method should only be called manually when
+   * tile selection is being driven by code external to the `Tileset`.
+   *
+   * @param tile The tile to update.
+   */
+  void updateTileContent(Tile& tile);
+
+  /**
+   * @brief Registers a tile load requester with this Tileset. Registered tile
+   * load requesters get to influence which tiles are loaded when
+   * @ref loadTiles is called.
+   *
+   * If the given requester is already registered with this Tileset, this method
+   * does nothing.
+   *
+   * To unregister a load requester, call @ref TileLoadRequester::unregister.
+   *
+   * @param requester The requester to register.
+   */
+  void registerLoadRequester(TileLoadRequester& requester);
+
+  /**
+   * @brief Waits until no tile loads are in progress. This function must be
+   * called from the main thread, and it blocks the caller (does not return)
+   * until all tile loads are complete.
+   *
+   * @param maximumWaitTimeInMilliseconds The maximum time to wait for tile
+   * loads to complete, in milliseconds. If this time is exceeded, the function
+   * will return even if some tile loads are still in progress.
+   * @returns true if all tile loads completed before the maximum wait time was
+   * exceeded; otherwise, false.
+   */
+  bool waitForAllLoadsToComplete(double maximumWaitTimeInMilliseconds);
+
+  Tileset(const Tileset& rhs) = delete;
+  Tileset& operator=(const Tileset& rhs) = delete;
+
+private:
+  void _unloadCachedTiles(double timeBudget) noexcept;
+
+  void _updateLodTransitions(
+      const TilesetFrameState& frameState,
+      float deltaTime,
+      ViewUpdateResult& result) const noexcept;
+
+  TilesetExternals _externals;
+  CesiumAsync::AsyncSystem _asyncSystem;
+
+  TilesetOptions _options;
+
+  // Holds computed distances, to avoid allocating them on the heap during tile
+  // selection.
+  std::vector<double> _distances;
+
+  // Holds the occlusion proxies of the children of a tile, to avoid
+  // per-frame allocation.
+  std::vector<const TileOcclusionRendererProxy*> _childOcclusionProxies;
+
+  CesiumUtility::IntrusivePointer<TilesetContentManager>
+      _pTilesetContentManager;
+
+  std::list<TilesetHeightRequest> _heightRequests;
+
+  TilesetViewGroup _defaultViewGroup;
+};
+
+} // namespace Cesium3DTilesSelection

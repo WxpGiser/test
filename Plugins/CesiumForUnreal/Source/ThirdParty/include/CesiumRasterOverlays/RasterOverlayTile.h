@@ -1,0 +1,276 @@
+#pragma once
+
+#include <CesiumAsync/AsyncSystem.h>
+#include <CesiumAsync/IAssetRequest.h>
+#include <CesiumGeometry/Rectangle.h>
+#include <CesiumUtility/IntrusivePointer.h>
+#include <CesiumUtility/ReferenceCounted.h>
+
+#include <vector>
+
+namespace CesiumUtility {
+struct Credit;
+}
+
+namespace CesiumImage {
+struct ImageAsset;
+}
+
+namespace CesiumRasterOverlays {
+
+class ActivatedRasterOverlay;
+class RasterOverlay;
+class RasterOverlayTileProvider;
+
+/**
+ * @brief Raster image data for a tile in a quadtree.
+ *
+ * Instances of this clas represent tiles of a quadtree that have
+ * an associated image, which us used as an imagery overlay
+ * for tile geometry. The connection between the imagery data
+ * and the actual tile geometry is established via the
+ * @ref Cesium3DTilesSelection::RasterMappedTo3DTile class, which combines a
+ * raster overlay tile with texture coordinates, to map the
+ * image on the geometry of a @ref Cesium3DTilesSelection::Tile.
+ */
+class RasterOverlayTile final
+    : public CesiumUtility::ReferenceCountedNonThreadSafe<RasterOverlayTile> {
+public:
+  /**
+   * @brief Lifecycle states of a raster overlay tile.
+   */
+  enum class LoadState {
+    /**
+     * @brief Indicator for a placeholder tile.
+     */
+    Placeholder = -2,
+
+    /**
+     * @brief The image request or image creation failed.
+     */
+    Failed = -1,
+
+    /**
+     * @brief The initial state
+     */
+    Unloaded = 0,
+
+    /**
+     * @brief The request for loading the image data is still pending.
+     */
+    Loading = 1,
+
+    /**
+     * @brief The image data has been loaded and the image has been created.
+     */
+    Loaded = 2,
+
+    /**
+     * @brief The rendering resources for the image data have been created.
+     */
+    Done = 3
+  };
+
+  /**
+   * @brief Tile availability states.
+   *
+   * Values of this enumeration are returned by
+   * @ref Cesium3DTilesSelection::RasterMappedTo3DTile::update, which in turn is
+   * called by `TilesetContentManager::updateDoneState`. These values are used
+   * to determine whether a leaf tile has been reached, but the associated
+   * raster tiles are not yet the most detailed ones that are available.
+   */
+  enum class MoreDetailAvailable {
+
+    /** @brief There are no more detailed raster tiles. */
+    No = 0,
+
+    /** @brief There are more detailed raster tiles. */
+    Yes = 1,
+
+    /** @brief It is not known whether more detailed raster tiles are available.
+     */
+    Unknown = 2
+  };
+
+  /**
+   * @brief Constructs a placeholder tile for the tile provider.
+   *
+   * The @ref getState of this instance will always be
+   * @ref LoadState::Placeholder.
+   *
+   * @param activatedOverlay The @ref ActivatedRasterOverlay. This object
+   * _must_ remain valid for the entire lifetime of the tile. If the activated
+   * overlay is destroyed before the tile, undefined behavior will result.
+   */
+  RasterOverlayTile(ActivatedRasterOverlay& activatedOverlay) noexcept;
+
+  /**
+   * @brief Creates a new instance.
+   *
+   * The tile will start in the `Unloaded` state, and will not begin loading
+   * until @ref ActivatedRasterOverlay::loadTile or
+   * @ref ActivatedRasterOverlay::loadTileThrottled is called.
+   *
+   * @param activatedOverlay The @ref ActivatedRasterOverlay. This object
+   * _must_ remain valid for the entire lifetime of the tile. If the activated
+   * overlay is destroyed before the tile, undefined behavior will result.
+   * @param targetScreenPixels The maximum number of pixels on the screen that
+   * this tile is meant to cover. The overlay image should be approximately this
+   * many pixels divided by the
+   * @ref RasterOverlayOptions::maximumScreenSpaceError in order to achieve
+   * the desired level-of-detail, but it does not need to be exactly this size.
+   * @param imageryRectangle The rectangle that the returned image must cover.
+   * It is allowed to cover a slightly larger rectangle in order to maintain
+   * pixel alignment. It may also cover a smaller rectangle when the overlay
+   * itself does not cover the entire rectangle.
+   */
+  RasterOverlayTile(
+      ActivatedRasterOverlay& activatedOverlay,
+      const glm::dvec2& targetScreenPixels,
+      const CesiumGeometry::Rectangle& imageryRectangle) noexcept;
+
+  /** @brief Default destructor. */
+  ~RasterOverlayTile();
+
+  /**
+   * @brief Gets the activated overlay that created this instance.
+   */
+  ActivatedRasterOverlay& getActivatedOverlay() noexcept;
+
+  /** @copydoc getActivatedOverlay */
+  const ActivatedRasterOverlay& getActivatedOverlay() const noexcept;
+
+  /**
+   * @brief Returns the @ref RasterOverlayTileProvider that is responsible
+   * for loading this tile's image.
+   */
+  RasterOverlayTileProvider& getTileProvider() noexcept;
+
+  /** @copydoc getTileProvider */
+  const RasterOverlayTileProvider& getTileProvider() const noexcept;
+
+  /**
+   * @brief Gets the @ref RasterOverlay associated with this instance.
+   */
+  const RasterOverlay& getOverlay() const noexcept;
+
+  /**
+   * @brief Returns the @ref CesiumGeometry::Rectangle that defines the bounds
+   * of this tile in the raster overlay's projected coordinates.
+   */
+  const CesiumGeometry::Rectangle& getRectangle() const noexcept {
+    return this->_rectangle;
+  }
+
+  /**
+   * @brief Gets the number of screen pixels in each direction that should be
+   * covered by this tile's texture.
+   *
+   * This is used to control which content (how highly detailed) the
+   * @ref RasterOverlayTileProvider uses within the bounds of this tile.
+   */
+  glm::dvec2 getTargetScreenPixels() const noexcept {
+    return this->_targetScreenPixels;
+  }
+
+  /**
+   * @brief Returns the current @ref LoadState.
+   */
+  LoadState getState() const noexcept { return this->_state; }
+
+  /**
+   * @brief Returns the list of \ref CesiumUtility::Credit "Credit"s needed for
+   * this tile.
+   */
+  const std::vector<CesiumUtility::Credit>& getCredits() const noexcept {
+    return this->_tileCredits;
+  }
+
+  /**
+   * @brief Returns the image data for the tile.
+   *
+   * This will only contain valid image data if the @ref getState of
+   * this tile is @ref LoadState "Loaded" or @ref LoadState "Done".
+   *
+   * @return The image data.
+   */
+  CesiumUtility::IntrusivePointer<const CesiumImage::ImageAsset>
+  getImage() const noexcept {
+    return this->_pImage;
+  }
+
+  /**
+   * @brief Returns the image data for the tile.
+   *
+   * This will only contain valid image data if the @ref getState of
+   * this tile is @ref LoadState "Loaded" or @ref LoadState "Done".
+   *
+   * @return The image data.
+   */
+  CesiumUtility::IntrusivePointer<CesiumImage::ImageAsset> getImage() noexcept {
+    return this->_pImage;
+  }
+
+  /**
+   * @brief Create the renderer resources for the loaded image.
+   *
+   * If the @ref getState of this tile is not @ref LoadState "Loaded",
+   * then nothing will be done. Otherwise, the renderer resources will be
+   * prepared, so that they may later be obtained with
+   * @ref getRendererResources, and the @ref getState of this tile
+   * will change to @ref LoadState "Done".
+   */
+  void loadInMainThread();
+
+  /**
+   * @brief Returns the renderer resources that have been created for this tile.
+   */
+  void* getRendererResources() const noexcept {
+    return this->_pRendererResources;
+  }
+
+  /**
+   * @brief Set the renderer resources for this tile.
+   *
+   * This function is not supposed to be called by clients.
+   */
+  void setRendererResources(void* pValue) noexcept {
+    this->_pRendererResources = pValue;
+  }
+
+  /**
+   * @brief Determines if more detailed data is available for the spatial area
+   * covered by this tile.
+   */
+  MoreDetailAvailable isMoreDetailAvailable() const noexcept {
+    return this->_moreDetailAvailable;
+  }
+
+  /**
+   * @brief Sets the load state of this tile.
+   *
+   * This function is not supposed to be called by clients.
+   *
+   * @private
+   */
+  void setState(LoadState newState) noexcept;
+
+private:
+  friend class ActivatedRasterOverlay;
+
+  // This is a raw pointer instead of an IntrusivePointer in order to avoid
+  // circular references, particularly among a placeholder tile provider and
+  // placeholder tile. However, to avoid undefined behavior, the tile provider
+  // is required to outlive the tile. In normal use, the RasterOverlayCollection
+  // ensures that this is true.
+  ActivatedRasterOverlay* _pActivatedOverlay;
+  glm::dvec2 _targetScreenPixels;
+  CesiumGeometry::Rectangle _rectangle;
+  std::vector<CesiumUtility::Credit> _tileCredits;
+  LoadState _state;
+  CesiumUtility::IntrusivePointer<CesiumImage::ImageAsset> _pImage;
+  void* _pRendererResources;
+  MoreDetailAvailable _moreDetailAvailable;
+};
+} // namespace CesiumRasterOverlays

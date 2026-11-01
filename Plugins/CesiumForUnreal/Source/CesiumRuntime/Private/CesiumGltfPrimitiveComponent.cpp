@@ -1,0 +1,146 @@
+// Copyright 2020-2026 CesiumGS, Inc. and Contributors
+
+#include "CesiumGltfPrimitiveComponent.h"
+#include "CalcBounds.h"
+#include "CesiumLifetime.h"
+#include "CesiumMaterialUserData.h"
+#include "Engine/Texture.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "PhysicsEngine/BodySetup.h"
+#include "VecMath.h"
+
+#include <CesiumGltf/MeshPrimitive.h>
+#include <CesiumGltf/Model.h>
+#include <variant>
+
+// Prevent deprecation warnings while initializing deprecated metadata structs.
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+// Sets default values for this component's properties
+UCesiumGltfPrimitiveComponent::UCesiumGltfPrimitiveComponent() {
+  PrimaryComponentTick.bCanEverTick = false;
+}
+
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+UCesiumGltfPrimitiveComponent::~UCesiumGltfPrimitiveComponent() {}
+
+void UCesiumGltfPrimitiveComponent::BeginDestroy() {
+  // Clear everything we can in order to reduce memory usage, because this
+  // UObject might not actually get deleted by the garbage collector until
+  // much later.
+  this->getPrimitiveData().destroy();
+
+  if (UMaterialInstanceDynamic* pMaterial =
+          Cast<UMaterialInstanceDynamic>(this->GetMaterial(0))) {
+    CesiumLifetime::destroy(pMaterial);
+  }
+
+  if (UStaticMesh* pMesh = this->GetStaticMesh()) {
+    if (UBodySetup* pBodySetup = pMesh->GetBodySetup()) {
+      CesiumLifetime::destroy(pBodySetup);
+    }
+    CesiumLifetime::destroy(pMesh);
+  }
+
+  Super::BeginDestroy();
+}
+
+FBoxSphereBounds UCesiumGltfPrimitiveComponent::CalcBounds(
+    const FTransform& LocalToWorld) const {
+  const CesiumPrimitiveData& primitiveData = this->getPrimitiveData();
+
+  std::optional<FBoxSphereBounds> maybeBounds = std::nullopt;
+  if (primitiveData.boundingVolume) {
+    maybeBounds = std::visit(
+        CalcBoundsOperation{
+            LocalToWorld,
+            primitiveData.highPrecisionNodeTransform},
+        *primitiveData.boundingVolume);
+  }
+  return maybeBounds.value_or(Super::CalcBounds(LocalToWorld));
+}
+
+void UCesiumGltfPrimitiveComponent::UpdateTransformFromCesium(
+    const glm::dmat4& CesiumToUnrealTransform) {
+  const CesiumPrimitiveData& primitiveData = this->getPrimitiveData();
+  const FTransform transform = VecMath::createTransform(
+      CesiumToUnrealTransform * primitiveData.highPrecisionNodeTransform);
+
+  if (this->Mobility == EComponentMobility::Movable) {
+    // For movable objects, move the component in the normal way, but don't
+    // generate collisions along the way. Teleporting physics is imperfect,
+    // but it's the best available option.
+    this->SetRelativeTransform(
+        transform,
+        false,
+        nullptr,
+        ETeleportType::TeleportPhysics);
+  } else {
+    // Unreal will yell at us for calling SetRelativeTransform on a static
+    // object, but we still need to adjust (accurately!) for origin rebasing
+    // and georeference changes. It's "ok" to move a static object in this way
+    // because, we assume, the globe and globe-oriented lights, etc. are
+    // moving too, so in a relative sense the object isn't actually moving.
+    // This isn't a perfect assumption, of course.
+    this->SetRelativeTransform_Direct(transform);
+    this->UpdateComponentToWorld();
+    this->MarkRenderTransformDirty();
+    SendPhysicsTransform(ETeleportType::ResetPhysics);
+  }
+}
+
+CesiumPrimitiveData& UCesiumGltfPrimitiveComponent::getPrimitiveData() {
+  return this->_cesiumData;
+}
+
+const CesiumPrimitiveData&
+UCesiumGltfPrimitiveComponent::getPrimitiveData() const {
+  return this->_cesiumData;
+}
+
+UStaticMeshComponent& UCesiumGltfPrimitiveComponent::GetMeshComponent() {
+  return *this;
+}
+
+ICesiumLoadedTile& UCesiumGltfPrimitiveComponent::GetLoadedTile() {
+  // Not GetAttachParent(): not yet attached (eg. when calling
+  // ICesium3DTilesetLifecycleEventReceiver::CreateMaterial)
+  return *Cast<ICesiumLoadedTile>(GetOuter());
+}
+
+std::optional<uint32_t>
+UCesiumGltfPrimitiveComponent::FindTextureCoordinateIndexForGltfAccessor(
+    int32_t accessorIndex) const {
+  std::unordered_map<int32_t, uint32_t> texCoordMap =
+      this->getPrimitiveData().gltfToUnrealTexCoordMap;
+  auto uvIndexIt = texCoordMap.find(accessorIndex);
+  return uvIndexIt != texCoordMap.end() ? std::make_optional(uvIndexIt->second)
+                                        : std::nullopt;
+}
+
+void UCesiumGltfPrimitiveComponent::OnCreatePhysicsState() {
+  // If we call Super::OnCreatePhysicsState before we initialize the body
+  // instance, the UPrimitiveComponent will make inappropriate assumptions about
+  // the model scale. Also, FBodyInstance::InitBody will make similar incorrect
+  // assumptions. However, if we manually initialize with a scale of 1.0 and
+  // then change to the actual scale, this skips all of UE's erroneous
+  // "validation" code, and even small scales will work correctly. See:
+  // https://github.com/CesiumGS/cesium-unreal/issues/1659
+  FTransform BodyTransform = GetComponentTransform();
+  if (!BodyInstance.IsValidBodyInstance() &&
+      BodyTransform.GetScale3D().IsNearlyZero()) {
+    FTransform BodyTransformWithoutScale = BodyTransform;
+    BodyTransformWithoutScale.SetScale3D(FVector(1.0));
+
+    UBodySetup* BodySetup = GetBodySetup();
+    BodyInstance.InitBody(
+        BodySetup,
+        BodyTransformWithoutScale,
+        this,
+        GetWorld()->GetPhysicsScene());
+    BodyInstance.UpdateBodyScale(BodyTransform.GetScale3D());
+  }
+
+  Super::OnCreatePhysicsState();
+}
