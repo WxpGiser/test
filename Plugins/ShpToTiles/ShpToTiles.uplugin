@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "SHP to 3D Tiles",
+	"Description": "Import Shapefile (.shp) footprints, extrude them into 3D Tiles (b3dm) and add the tileset to the Cesium scene. Optional per-feature terrain clamping and attribute-driven coloring.",
+	"Category": "Geospatial",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "ShpToTiles",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "CesiumForUnreal",
+			"Enabled": true
+		}
+	]
+}

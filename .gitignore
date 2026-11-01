@@ -1,0 +1,11 @@
+.vs/
+DerivedDataCache/
+Intermediate/
+Plugins/CesiumForUnreal/
+Plugins/VibeUE/
+Saved/
+Build/
+.vsconfig
+Plugins/*/Binaries/
+Plugins/*/Intermediate
+Binaries/
